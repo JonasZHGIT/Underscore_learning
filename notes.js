@@ -1,16 +1,23 @@
 (function() {
   // root 保存全局变量。
   const root = this;
+
   // 简写各种方法
-  const objProto = Object.prototype;
+  const objProto = Object.prototype,
+        ArrayProto = Array.prototype;
+
   // Object.prototype.toString 方法会返回变量类型
-  const toString = objProto.toString;
-  const hasOwnProperty = objProto.hasOwnProperty;
+  const toString = objProto.toString,
+        hasOwnProperty = objProto.hasOwnProperty;
+  
+  const slice = ArrayProto.slice;
+  
   // 返回表示对象自身可枚举属性字符串的数组
-  const nativeKeys = Object.keys;
+  const nativeKeys = Object.keys,
+        nativeCreate = Object.create;
 
   // 创建 _ 函数（构造函数？）
-  let _ = function (obj) {
+  const _ = function (obj) {
     if (obj instanceof _) {
       return obj;
     }
@@ -19,6 +26,8 @@
     }
     this._wrapped = obj;
   }
+
+  const Ctor = function(){};
 
   const MAX_ARRAY_INDEX = Math.pow(2, 53) - 1;
 
@@ -53,12 +62,62 @@
     }
   }
 
+  // 创建一个继承原型函数的函数实例
+  const baseCreate = function(prototype) {
+    if(!_.isObject(prototype)) return {};
+    if(nativeCreate) return nativeCreate(prototype);
+    Ctor.prototype = prototype;
+    let result = new Ctor();
+    // 重写Ctor.prototype，切断了Ctor与result之间的联系
+    // result._proto_指向仍然是原Ctor.prototype(prototype)
+    Ctor.prototype = null;
+    return result;
+  }
+
+  const createReduce = function(dir) {
+    return function(obj, iteratee, memo, context) {
+      iteratee = optimizeCb(iteratee, context);
+      let keys = !isArrayLike(obj) && _.keys(obj),
+          length = keys || obj.length,
+          // dir>0从第一个元素开始， dir<0从最后一个元素开始
+          // dir 值为步长
+          index = dir>0 ? 0 :length - 1;
+      if(arguments.length < 3) {
+        // memo参数是初始值
+        memo = obj[keys?keys[index]:index];
+        index += dir;
+      }
+      return (function(obj, iteratee, memo, keys, index, length) {
+        for(; index>=0&&index<length; index+=dir) {
+          let currentKey = keys?keys[index]:index;
+          memo = iteratee(memo, obj[currentKey], currentKey, obj);
+        }
+        return memo;
+      })(obj, iteratee, memo, keys, index, length);
+    }
+  }
+
+  // 在数组中查找特定的元素，并返回index
+  const createIndexFinder = function(dir) {
+    return function(array, predicate, context) {
+      predicate = cb(predicate, context);
+      let length = array != null && array.length,
+          index = dir > 0 ? 0 : length - 1;
+      for(; index >= 0 && index < length; index += dir) {
+        // predicate 方法需要返回可以正确转化为boolean值
+        if(predicate(array[index], index, array)) return index;
+      }
+      return -1;
+    }
+  }
+  
   // 函数也可以返回true；由于返回的是!!obj，null会返回为false
   _.isObject = function(obj) {
     let type = typeof obj;
     return type === "function" || type === "object" && !!obj;
   }
 
+  // 遍历对象，并对其中的每一项执行iteratee方法
   _.each = function (obj, iteratee, context) {
     iteratee = optimizeCb(iteratee, context);
     let i;
@@ -79,6 +138,10 @@
       return toString.call(obj) === `[object ${name}]`;
     };
   });
+
+  _.isNaN = function (obj) {
+    return _.isNumber(obj) && obj !== obj;
+  }
 
   // 对象是否具有特定属性
   _.has = function(obj, key) {
@@ -148,6 +211,152 @@
 
   _.identity = function(value) {
     return value;
+  }
+
+  // 类数组和对象都可以使用_.map方法
+  // 如果iteratee参数传入的是一个对象，根据cb方法的定义
+  // _.map的作用是判断数组obj中的是否包含iteratee对象
+  // 并返回一个由boolean值组成的数组
+  _.map = function (obj, iteratee, context) {
+    iteratee = cb(iteratee, context);
+    let keys = !isArrayLike(obj) && _.keys(obj),
+      length = keys || obj.length,
+      result = Array(length);
+    // 如果obj不是类数组，length等于由obj的属性名组成的数组（来自于_.keys(obj)）
+    // 返回result为嵌套数组，内含有唯一元素length（数组）
+    // 下面的循环不会运行
+    for (let index = 0; index < length; index++) {
+      let currentKey = keys ? key[index] : index;
+      result[index] = iteratee(obj[currentKey], currentKey, obj);
+    }
+    return result;
+  }
+
+  _.reduce = createReduce(1);
+  _.reduceRight = createReduce(-1);
+  _.findIndex = createIndexFinder(1);
+  _.findLastIndex = createIndexFinder(-1);
+
+  _.findKey = function(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    let keys = _.keys(obj),
+        key;
+    for(let i=0; i<keys.length; i++) {
+      key = keys[i];
+      if(predicate(obj[key], key, obj)) return key;
+    }
+  }
+
+  // 返回obj中第一个predicate返回值为true的元素（属性）
+  _.find = function(obj, predicate, context) {
+    let key;
+    if(isArrayLike(obj)) {
+      key = _.findIndex(obj, predicate, context);
+    } else {
+      key = _.findKey(obj, predicate, context);
+    }
+    if(key !== void 0 && key !== -1) return obj[key];
+  }
+
+  _.filter = function(obj, predicate, context) {
+    let result = [];
+    predicate = cb(predicate, context);
+    _.each(obj, function(value, index, list) {
+      if(predicate(calue, index, list)) result.push(value);
+    });
+    return result;
+  }
+
+  // 反转predicate方法的返回值
+  _.negate = function(predicate) {
+    return function() {
+      return !predcate.apply(this, arguments);
+    }
+  }
+
+  _.reject = function(obj, predicate, context) {
+    return _.filter(obj, _.negate(cb(predicate)), context);
+  }
+
+  _.every = function(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    let keys = !isArrayLike(obj) && _.keys(obj),
+        length = keys || obj.length;
+    for(let index = 0; index < length; index++) {
+      let currentKey = keys ? keys[index] : index;
+      if(!predicate(obj[currentKey], currentKey, obj)) return false;
+    }
+    return true;
+  }
+
+  _.some = function(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    let keys = !isArrayLike(obj) && _.keys(obj);
+        length = keys || obj.length;
+    for(let index = 0; index < length; index++) {
+      let currentKey = keys ? keys[index] : index;
+      if(predicate(obj[currentKey], currentKey, obj)) return true;
+    }
+    return false;
+  }
+
+  _.values = function(obj) {
+    let keys = _.keys(obj),
+        length = keys.length,
+        values = Array(length);
+    for(let i=0; i<length; i++) {
+      values[i] = obj[keys[i]];
+    }
+    return values;
+  }
+
+  // 在有序数组Array中找到obj插入的位置
+  _.sortedIndex = function(array, obj, iteratee, context) {
+    iteratee = cb(iteratee, context);
+    let value = iteratee(obj),
+        low = 0,
+        high = array.length;
+    // 二分法查值 
+    while(low < high) {
+      let mid = Math.floor((low + high) / 2);
+      if(iteratee(array[mid]) < value) low = mid + 1;
+      else high = mid;
+    }
+    return low;
+  }
+
+  _.indexOf = function(array, item, isSorted) {
+    let i = 0,
+        length = array && array.length;
+    if(typeof isSorted == "number") {
+      // 定义查找起始位置index
+      i = isSorted < 0 ? Math.max(0, length + isSorted) : isSorted;
+    } else if(isSorted && length) {
+      i = _.sortedIndex(array, item);
+      // 如果item应在的位置下标的元素不等于item，说明array中不包含item
+      return array[i] === item ? i : -1;
+    }
+    // 判断item是否是NaN
+    if(item !== item) {
+      return _.findIndex(slice.call(array, i), _.isNaN);
+    }
+    // 无序array，遍历对比
+    for(; i<length; i++) if(array[i] === item) return i;
+  }
+
+  _.contains = function(obj, target, fromIndex) {
+    if(!isArrayLike(obj)) obj = _.values(obj);
+    return _.indexOf(obj, target, (typeof fromIndex === "number" && fromIndex) >= 0);
+  }
+
+  // 对obj中每个元素执行method
+  _.invoke = function(obj, method) {
+    let args = slice.call(arguments, 2),
+        isFunc = _.isFunction(method);
+    return _.map(obj, function(value) {
+      let fn = isFunc ? method : value[method];
+      return fn == null ? fn : fn.apply(value, args);
+    });
   }
 
 
