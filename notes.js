@@ -12,9 +12,10 @@
   
   const slice = ArrayProto.slice;
   
-  // 返回表示对象自身可枚举属性字符串的数组
+  // Object.keys返回表示对象自身可枚举属性字符串的数组
   const nativeKeys = Object.keys,
-        nativeCreate = Object.create;
+        nativeCreate = Object.create,
+        nativeIsArray = Array.isArray;
 
   // 创建 _ 函数（构造函数？）
   const _ = function (obj) {
@@ -30,6 +31,18 @@
   const Ctor = function(){};
 
   const MAX_ARRAY_INDEX = Math.pow(2, 53) - 1;
+
+  // 返回_的实例，实现链式语法
+  _.chain = function (obj) {
+    let instance = _(obj);
+    instance._chain = true;
+    return instance;
+  }
+
+  // 返回链式语法
+  const result = function (instance, obj) {
+    return instance._chain ? _(obj).chain() : obj;
+  }
 
   // 定义类数组判断
   const isArrayLike = function (collection) {
@@ -111,6 +124,14 @@
     }
   }
   
+  _.prototype.value = function() {
+    return this._wrapped;
+  }
+  _.prototype.valueOf = _.prototype.toJSON = _.prototype.value;
+  _.prototype.toString = function() {
+    return '' + this._wrapped;
+  }
+  
   // 函数也可以返回true；由于返回的是!!obj，null会返回为false
   _.isObject = function(obj) {
     let type = typeof obj;
@@ -132,11 +153,26 @@
     }
   }
 
+  _.isArray = nativeIsArray || (function(obj) {
+    return toString.call(obj) === "[object Array]";
+  });
+  
   // 创建is方法，判断变量类型，这里利用了Object.prototype.toString方法
   _.each(["Arguments", "Function", "String", "Number", "Date", "RegExp", "Error"], function (name) {
     _[`is${name}`] = function (obj) {
       return toString.call(obj) === `[object ${name}]`;
     };
+  });
+
+  _.each(["pop", "push", "reverse", "shift", "sort", "splice", "unshift"], function(name) {
+    let method = ArrayProto[name];
+    _.prototype[name] = function() {
+      let obj = this._wrapped;
+      method.apply(obj, arguments);
+      // 解决IE关于shift和splice方法的bug
+      if(name === "shift" || name === "splice" && obj.length === 0) delete obj[0];
+      return result(this, obj);
+    }
   });
 
   _.isNaN = function (obj) {
@@ -207,6 +243,18 @@
     if(_.isObject(value)) return _.matcher(value);
     // 如果以上都不是，callback作用是传入一个属性value，返回对应的属性值
     return _.property(value);
+  }
+
+  const group = function(behavior) {
+    return function(obj, iteratee, context) {
+      let result = {};
+      iteratee = cb(iteratee, context);
+      _.each(obj, function(value, index) {
+        let key = iteratee(value, index, obj);
+        behavior(result, value, key);
+      });
+      return result;
+    }
   }
 
   _.identity = function(value) {
@@ -359,5 +407,214 @@
     });
   }
 
+  // 获取obj中元素key属性的属性值
+  _.pluck = function(obj, key) {
+    return _.map(obj, _.property(key));
+  }
+
+  // 返回obj中包含attrs键值对的元素
+  _.where = function(obj, attrs) {
+    return _,filter(obj, _.matcher(attrs));
+  }
+
+  // 返回obj中第一个包含attrs键值对的元素
+  _.findWhere = function(obj, attrs) {
+    return _.find(obj, _.matcher(attrs));
+  }
+
+  _.max = function(obj, iteratee, context) {
+    let result = -Infinity,
+        lastComputed = - Infinity,
+        value,
+        computed;
+    if(iteratee == null && obj != null) {
+      obj = isArrayLike(obj) ? obj : _.values(obj);
+      for(let i = 0; i < obj.length; i++) {
+        value = obj[i];
+        if(value > result) {
+          resutl = value;
+        }
+      }
+    } else {
+      iteratee = cb(iteratee, context);
+      _.each(obj, function(value, index, list) {
+        computed = iteratee(value, index, list);
+        if(computed > lastComputed || computed === -Infinity && result === -Infinity) {
+          result = value;
+          lastComputed = computed;
+        }
+      });
+    }
+    return result;
+  }
+
+  _.min = function(obj, iteratee, context) {
+    let result = Infinity,
+        lastComputed = Infinity,
+        value,
+        computed;
+    if(iteratee == null && obj != null) {
+      obj = isArrayLike(obj) ? obj : _.values(obj);
+      for(let i=0; i<obj.length; i++) {
+        value = obj[i];
+        if(value < result) {
+          result = value;
+        }
+      }
+    } else {
+      iteratee = cb(iteratee, context);
+      _.each(obj, function(value, index, list) {
+        computed = iteratee(value, index, list);
+        if(computed < lastComputed || computed === Infinity && result === Inifnity) {
+          result = value;
+          lastComputed = computed;
+        }
+      });
+    }
+    return result;
+  }
+
+  _.random = function(min, max) {
+    if(max == null) {
+      max = min;
+      min = 0;
+    }
+    return min + Math.floor(Math.random()*(max-min+1));
+  }
+  
+  // 随机打乱obj中元素的顺序
+  _.shuffle = function(obj) {
+    let set = isArrayLike(obj) ? obj : _values(obj),
+        length = set.length,
+        shuffled = Array(length),
+        rand;
+    for(let index=0; index<length; index++) {
+      rand = _.random(0, index);
+      if(rand !== index) shuffled[index] = shuffled[rand];
+      shuffled[rand] = set[index];
+    }
+    return shuffled;
+  }
+
+  // 从obj中随机取出n个元素返回新数组，没有给定参数n时返回单个元素
+  _.sample = function(obj, n, guard) {
+    if(n == null || guard) {
+      obj = isArrayLike(obj) ? obj : _.values(obj);
+      return obj[_.random(obj.length - 1)];
+    }
+    return _.shuffle(obj).slice(0, Math.max(0, n));
+  }
+
+  _.sortBy = function(obj, iteratee, context) {
+    iteratee = cb(iteratee, context);
+    return _.pluck(_.map(obj, function(value, index, list) {
+      return {
+        value: value,
+        index: index,
+        critiria: iteratee(value, index, list)
+      };
+    }).sort(function(left, right) {
+      let a = left.criteria,
+          b = right.criteria;
+      if(a !== b) {
+        if(a > b || a === void 0) return 1;
+        if(a < b || b === void 0) return -1;
+      }
+      return left.index - right.index;
+    }), "value");
+  }
+
+  // 根据传入的参数给obj的元素分组，返回一个包含分组结果的对象
+  _.groupBy = group(function(result, value, key) {
+    if(_.has(result, key)) result[key].push(value);
+    else result[key] = [value];
+  });
+
+  _.indexBy = group(function(result, value, key) {
+    result[key] = value;
+  });
+
+  _.countBy = group(function(result, value, key) {
+    if(_.has(result, key)) result[key]++;
+    else result[key] = 1;
+  });
+
+  // slice方法无参数调用会将对象转化为数组
+  _.toArray = function(obj) {
+    if(!obj) return [];
+    if(_.isArray(obj)) return slice.call(obj);
+    if(isArrayLike(obj)) return _.map(obj, _.identity);
+    return _.values(obj);
+  }
+
+  _.size = function(obj) {
+    if(obj == null) return 0;
+    return isArrayLike(obj) ? obj.length : _.keys(obj).length;
+  }
+
+  // 给obj元素分组，一组是predicate结果为true的元素，另一组为false的元素
+  _.partition = function(obj, predicate, context) {
+    predicate = cb(predicate, context);
+    let pass = [],
+        fail = [];
+    _.each(obj, function(value, key, obj) {
+      predicate(value, key, obj) ? pass.push(value) : fail.push(value);
+    });
+    return [pass, fail];
+  }
+
+  // 返回除了后面n个元素之外的其余元素数组
+  _.initial = function(array, n, guard) {
+    return slice.call(array, 0, Math.max(0, array.length - (n == null || guard ? 1 : n)));
+  }
+
+  // 返回前面n个元素数组
+  _.first = function(array, n, guard) {
+    if(array == null) return void 0;
+    if(n == null || guard) return array[0];
+    return _.initial(array, array.length - n);
+  }
+
+  // 返回除了前面n个元素之外的其余元素数组
+  _.rest = function(array, n, guard) {
+    return slice.call(array, n == null || guard ? 1 : n);
+  }
+
+  // 返回后面n个元素数组
+  _.last = function(array, n, guard) {
+    if(array == null) return void 0;
+    if(n == null || guard) return array[array.length - 1];
+    return _.rest(array, Math.max(0, array.length - n));
+  }
+
+  // 返回除去所有falsy项的数组
+  _.compact = function(array) {
+    return _.filter(array, _.identity);
+  }
+
+  // 嵌套数组展开
+  const flatten = function (input, shallow, strict, startIndex) {
+    let output = [],
+      idx = 0;
+    for (let i = startIndex || 0, length = input && input.length || 0; i < length; i++) {
+      let value = input[i];
+      if (isArrayLike(value) && _.isArray(value) || _.isArguments(value)) {
+        if (!shallow) value = flatten(value, shallow, strict);
+        let j = 0,
+          len = value.length;
+        output.length += len;
+        while (j < len) {
+          output[idx++] = value[j++]
+        }
+      } else if (!strict) {
+        output[idx++] = value;
+      }
+    }
+    return output;
+  }
+
+  _.flatten = function(array, shallow) {
+    return flatten(array, shallow, false);
+  }
 
 }).call(this); // this 这里是全局变量，在node环境下是exports
