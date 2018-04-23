@@ -4,7 +4,8 @@
 
   // 简写各种方法
   const objProto = Object.prototype,
-        ArrayProto = Array.prototype;
+        ArrayProto = Array.prototype,
+        FuncProto = Function.prototype;
 
   // Object.prototype.toString 方法会返回变量类型
   const toString = objProto.toString,
@@ -15,6 +16,7 @@
   // Object.keys返回表示对象自身可枚举属性字符串的数组
   const nativeKeys = Object.keys,
         nativeCreate = Object.create,
+        nativeBind = FuncProto.bind,
         nativeIsArray = Array.isArray;
 
   // 创建 _ 函数（构造函数？）
@@ -392,6 +394,7 @@
     for(; i<length; i++) if(array[i] === item) return i;
   }
 
+  // 检查obj（数组）中是否包含给定的属性值（元素）
   _.contains = function(obj, target, fromIndex) {
     if(!isArrayLike(obj)) obj = _.values(obj);
     return _.indexOf(obj, target, (typeof fromIndex === "number" && fromIndex) >= 0);
@@ -407,7 +410,7 @@
     });
   }
 
-  // 获取obj中元素key属性的属性值
+  // 获取obj中各元素key属性的属性值，并返回由属性值组成的数组
   _.pluck = function(obj, key) {
     return _.map(obj, _.property(key));
   }
@@ -616,5 +619,395 @@
   _.flatten = function(array, shallow) {
     return flatten(array, shallow, false);
   }
+
+  // 返回array中没在其余数组中出现的元素组成的新数组
+  _.difference = function(array) {
+    // 展开所有参数数组（除了指定的array之外， 还可以存在其他参数数组）
+    let rest = flatten(arguments, true, true, 1);
+    return _.filter(array, function(value) {
+      return !_.contains(rest, value);
+    })
+  }
+
+  // 返回array删除与其余参数相同元素后，由剩余元素组成的新数组
+  _.without = function(array) {
+    // slice.call(arguments, 1)作用是将除array之外的参数放入一个参数数组中
+    return _.difference(array, slice.call(arguments, 1));
+  }
+
+  // 数组去重
+  _.uniq = function(array, isSorted, iteratee, context) {
+    if(array == null) return [];
+    // isSorted 参数是可选项
+    if(!_.isBoolean(isSorted)) {
+      context = iteratee;
+      iteratee = isSorted;
+      isSorted = false;
+    }
+    if(iteratee != null) iteratee = cb(iteratee, context);
+    let result = [];
+    // seen 数组是已存在的iteratee过的元素，与computed对应
+    let seen = [];
+    for(let i =0; i < array.length; i++) {
+      let value = array[i],
+          computed = iteratee ? iteratee(value, i , array) : value;
+      // 如果array是已排序数组，则可以采用简单方法对比
+      if(isSorted) {
+        // 从第二个元素开始（第一个元素在一开始不存在重复的问题）
+        // 或者判断当前值是否等于前一个值
+        if(!i || seen !== computed) result.push(value);
+        // seen等于上一个值
+        seen = computed;
+      }
+      else if(iteratee) {
+        if(!_.contains(seen, computed)) {
+          seen.push(computed);
+          result.push(value);
+        }
+      } else if (!_.contains(result, value)) result.push(value);
+    }
+    return result;
+  }
+
+  // 返回所有参数数组的并集
+  _.union = function() {
+    return _.uniq(flatten(arguments, true, true));
+  }
+
+  // 返回所有参数数组的交集
+  _.intersection = function(array) {
+    if(array == null) return [];
+    let result = [],
+        argsLength = arguments.length;
+    for(let i = 0; i < array.length; i++) {
+      let item = array[i];
+      // 如果result中已经包括item元素（即重复），直接跳过这次循环
+      if(_.contains(result, item)) continue;
+      for(let j = 1; j < argsLength; j++) {
+        if(!_.contains(arguments[j], item)) break;
+      }
+      // 判断是否j的全部循环都已经执行，全部执行说明所有数组参数中都包含item
+      if(j === argsLength) result.push(item);
+    }
+    return result;
+  }
+
+  // 返回嵌套数组array转置后的新嵌套数组，传入参数只能是嵌套数组
+  _.unzip = function(array) {
+    // _.max(array, "length") 返回array中"length"属性值较大的元素
+    let length = array && _.max(array, "length").length || 0;
+    console.log(_.max(array, "length"));
+    let result = Array(length);
+    for(let index = 0; index < length; index++) {
+      // _.pluck(array, index) 返回array数组每个元素index相同项组成的新数组（矩阵转置）
+      result[index] = _.pluck(array, index);
+    }
+    return result;
+  }
+
+  // 与_.unzip功能相同，不同之处是传入的参数可以是多个数组
+  _.zip = function() {
+    return _.unzip(arguments);
+  }
+
+  // 将数组转换为对象
+  _.object = function(list, values) {
+    let result = {};
+    for(let i = 0, length = list && list.length; i < length; i++) {
+      if(values) result[list[i]] = value[i];
+      else result[list[i][0]] = list[i][1];
+    }
+    return result;
+  }
+
+  // 反向查找数组中item项并返回索引
+  // 与_.findLastIndex不同之处是后者可以传入iteratee方法
+  _.lastIndexOf = function(array, item, from) {
+    let idx = array ? array.length : 0;
+    if(typeof from == "number") idx = from < 0 ? idx + from + 1 : Math.min(idx, from + 1);
+    // 如果item是NaN
+    if(item !== item) return _.findLastIndex(slice.call(array, 0, idx), _.isNaN);
+    while(--idx >= 0) if(array[idx] === item) return idx;
+    return -1;
+  }
+
+  // 返回一个从start到stop的整数数组，step是步长
+  _.range = function(start, stop, step = 1) {
+    // 定义start为可选项
+    if(arguments.length <= 1) {
+      stop = start || 0;
+      start = 0;
+    }
+    let length = Math.max(Math.ceil((stop - start) / step), 0);
+    let range = Array(length);
+    for(let idx = 0; idx < length; idx++, start += step) {
+      range[idx] = start;
+    } 
+    return range;
+  }
+
+  const executeBound = function(sourceFunc, boundFunc, context, callingContext, args) {
+    if(!(callingContext instanceof boundFunc)) return sourceFunc.apply(context, args);
+    let self = baseCreate(sourceFunc.prototype);
+    let result = sourceFunc.apply(self, args);
+    if(_.isObject(result)) return result;
+    return self;
+  }
+
+  _.bind = function(fn, context) {
+    if(nativeBind && fn.bind === nativeBind) return nativeBind.apply(fn, slice.call(arguments, 1));
+    if(!_.isFunction(fn)) throw new TypeError("Bind must be called on a function");
+    let args = slice.call(arguments, 2);
+    let bound = function() {
+      return executeBound(fn, bound, context, this, args.concat(slice.call(arguments)));
+    }
+    return bound;
+  }
+
+  _.partial = function(fn) {
+    let boundArgs = slice.call(arguments, 1);
+    let bound = function() {
+      let position = 0,
+          length = boundArgs.length,
+          args = Array(length);
+      for(let i = 0; i < length; i++) {
+        args[i] = boundArgs[i] === _ ? arguments[position++] : boundArgs[i];
+      }
+      while(position < arguments.length) args.push(arguments[position++]);
+      return executeBound(fn, bound, this, this, args);
+    }
+    return bound;
+  }
+
+  // 绑定所有方法参数到obj上
+  _.bindAll = function(obj) {
+    let i,
+        length = arguments.length,
+        key;
+    if(length <= 1) throw new Error("bindAll must be passed function names");
+    for(i = 1; i < length; i++) {
+      key = arguments[i];
+      obj[key] = _.bind(obj[key], obj);
+    }
+    return obj;
+  }
+
+  _.memorize = function(fn, hasher) {
+    let memorize = function(key) {
+      let cache = memorize.cache;
+      let address = '' + hasher ? hasher.apply(this, arguments) : key;
+      if(!_.has(cache, address)) cache[address] = fn.apply(this, arguments);
+      return cache[address];
+    }
+    memorize.cache = {};
+    return memorize;
+  }
+
+  // 延迟执行函数并添加参数
+  _.delay = function(fn, wait) {
+    let args = slice.call(arguments, 2);
+    return setTimeout(function() {
+      // 全局调用fn方法
+      return fn.apply(null, args);
+    }, wait);
+  }
+
+  _.now = Date.now || function() {
+    return new Date().getTime();
+  }
+
+  _.defer = _.partial(_.delay, _, 1);
+
+  // 创建一个至少每wait时间执行一次的fn函数
+  _.throttle = function(fn, wait, options) {
+    let context,
+        args,
+        result;
+    let timeout = null;
+    let previous = 0;
+    if(!options) options = {};
+    let later = function() {
+      previous = options.leading === false ? 0 : _.now();
+      timeout = null;
+      result = fn.apply(context, args);
+      if(!timeout) context = args = null;
+    }
+    return function() {
+      let now = _.now();
+      if(!previous && options.leading === false) previous = now;
+      let remaining = wait - (now - previous);
+      context = this;
+      args = arguments;
+      if(remaining <= 0 || remaining > wait) {
+        if(timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        previous = now;
+        result = fn.apply(context, args);
+        if(!timeout) context = args = null;
+      } else if(!timeout && options.trailing !== false) timeout = setTimeout(later, remaining);
+      return result;
+    }
+  }
+
+  // 创建在wait时间间隔只能执行一次的fn函数
+  _.debounce = function(fn, wait, immediate) {
+    let tiemout,
+        args,
+        context,
+        timestamp,
+        result;
+    let later = function() {
+      let last = _.now() - timestamp;
+      if(last < wait && last >= 0) timeout = setTimeout(later, wait - last);
+      else {
+        timeout = null;
+        if(!immediate) {
+          result = fn.apply(context, args);
+          if(!timeout) context = args = null;
+        }
+      }
+    }
+    return function() {
+      context = this;
+      args = arguments;
+      timestamp = _.now();
+      let callNow = immediate && !timeout;
+      if(!timeout) timeout = setTimeout(later, wait);
+      if(callNow) {
+        result = fn.apply(context, args);
+        context = args = null;
+      }
+      return result;
+    }
+  }
+
+  // 将fn作为参数封装到wrapper函数中
+  _.wrap = function(fn, wrapper) {
+    return _.partial(wrapper, fn);
+  }
+
+  // 创建复合函数
+  // 最后一个参数函数执行后，将返回的结果作为前一个参数函数的参数继续执行
+  _.compose = function() {
+    let args = arguments;
+    let start = args.length - 1;
+    return function() {
+      let i = start;
+      let result = args[start].apply(this, arguments);
+      while(i--) result = args[i].call(this, result);
+      return result;
+    }
+  }
+
+  // 调用times次数之后才运行fn函数
+  // 第一次调用之后，参数times存入内存
+  _.after = function(times, fn) {
+    return function() {
+      if(--times < 1) {
+        return fn.apply(this, arguments);
+      }
+    }
+  }
+
+  // 创建只能运行小于times次数的fn函数
+  _.before = function(times, fn) {
+    let memo;
+    return function() {
+      if(--times > 0) {
+        memo = fn.apply(this, arguments);
+      }
+      if(times <= 1) fn = null;
+      return memo;
+    }
+  }
+
+  // 创建只能运行一次的函数
+  _.once = _.partial(_.before, 2);
+
+  // _.map方法的对象版本
+  _.mapObject = function(obj, iteratee, context) {
+    iteratee = cb(iteratee, context) {
+      let keys = _.keys(obj),
+          length = keys.length,
+          result = {},
+          currentKey;
+      for(let index = 0; index < length; index++) {
+        currentKey = keys[index];
+        result[currentKey] = iteratee(obj[currentKey], currentKey, obj);
+      }
+    }
+    return result;
+  }
+
+  // 把obj对象转换成键值对组成的嵌套数组
+  _.pairs = function(obj) {
+    let keys = _.keys(obj);
+    let length = keys.length;
+    let pairs = Array(length);
+    for(let i = 0; i < length; i++) pairs[i] = [keys[i], obj[keys[i]]];
+    return pairs;
+  }
+
+  // 对调obj对象的键值对
+  _.invert = function(obj) {
+    let result = {};
+    let keys = _.keys(obj);
+    for(let i = 0; i < keys.length; i++) result[obj[keys[i]]] = keys[i];
+    return result;
+  }
+
+  // 返回对象obj所有方法名组成的有序数组
+  _.functions = function(obj) {
+    let names = [];
+    for(let key in obj) {
+      if(_.isFunction(obj[key])) names.push(key);
+    }
+    return names.sort();
+  }
+
+  // _.filter方法的对象版本
+  _.pick = function(object, oiteratee, context) {
+    let result = {},
+        obj = object;
+        iteratee,
+        keys;
+    if(obj == null) return result;
+    if(_.isFunction(oiteratee)) {
+      keys = _.allKeys(obj);
+      iteratee = optimizeCb(oiteratee, context);
+    } else {
+      keys = flatten(arguments, false, false, 1);
+      iteratee = function(value, key, obj) {
+        return key in obj;
+      }
+      obj = Object(obj);
+    }
+    for(let i = 0; i < keys.length; i++) {
+      let key = keys[i];
+      let value = obj[key];
+      if(iteratee(value, key, obj)) result[key] = value;
+    }
+    return result;
+  }
+
+  // _.reject方法的对象版本
+  _.omit = function(obj, iteratee, context) {
+    if(_.isFunction(iteratee)) iteratee = _.negate(iteratee);
+    else {
+      let keys = _.map(flatten(arguments, false, false, 1), String);
+      iteratee = function(value, key) {
+        return !_.contains(keys, key);
+      }
+    }
+    return _.pich(obj, iteratee, context);
+  }
+
+  // 与_.extend方法作用相同
+  // 不同之处是如果原对象中包括了同属性名的键值对，将不会覆盖原属性
+  // 而_.extend方法会覆盖同名属性
+  // createAssigner方法第二个参数的区别
+  _.defaults = createAssigner(_.allKeys, true);
 
 }).call(this); // this 这里是全局变量，在node环境下是exports
