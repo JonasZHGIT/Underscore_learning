@@ -1,7 +1,8 @@
 (function() {
   // root 保存全局变量。
   const root = this;
-
+  const previousUnderscore = root._;
+  
   // 简写各种方法
   const objProto = Object.prototype,
         ArrayProto = Array.prototype,
@@ -9,9 +10,9 @@
 
   // Object.prototype.toString 方法会返回变量类型
   const toString = objProto.toString,
-        hasOwnProperty = objProto.hasOwnProperty;
-  
-  const slice = ArrayProto.slice;
+        hasOwnProperty = objProto.hasOwnProperty,
+        slice = ArrayProto.slice,
+        push = ArrayProto.push;
   
   // Object.keys返回表示对象自身可枚举属性字符串的数组
   const nativeKeys = Object.keys,
@@ -28,6 +29,15 @@
       return new _(obj);
     }
     this._wrapped = obj;
+  }
+
+  // 定义 CommonJS 方式加载模块
+  // 定义浏览器环境全局变量 _
+  if(typeof exports !== "undefined") {
+    if(typeof module !== "undefined" && module.exports) exports = module.exports = _;
+    exports._ = _;
+  } else {
+    root._ = _;
   }
 
   const Ctor = function(){};
@@ -174,6 +184,13 @@
       // 解决IE关于shift和splice方法的bug
       if(name === "shift" || name === "splice" && obj.length === 0) delete obj[0];
       return result(this, obj);
+    }
+  });
+
+  _.each(["concat", "join", "slice"], function(name) {
+    let method = ArrayProto[name];
+    _.prototype[name] = function() {
+      return result(this, method.apply(this._wrapped, arguments));
     }
   });
 
@@ -928,15 +945,14 @@
 
   // _.map方法的对象版本
   _.mapObject = function(obj, iteratee, context) {
-    iteratee = cb(iteratee, context) {
-      let keys = _.keys(obj),
-          length = keys.length,
-          result = {},
-          currentKey;
-      for(let index = 0; index < length; index++) {
-        currentKey = keys[index];
-        result[currentKey] = iteratee(obj[currentKey], currentKey, obj);
-      }
+  iteratee = cb(iteratee, context);
+    let keys = _.keys(obj),
+        length = keys.length,
+        result = {},
+        currentKey;
+    for(let index = 0; index < length; index++) {
+      currentKey = keys[index];
+      result[currentKey] = iteratee(obj[currentKey], currentKey, obj);
     }
     return result;
   }
@@ -1009,5 +1025,211 @@
   // 而_.extend方法会覆盖同名属性
   // createAssigner方法第二个参数的区别
   _.defaults = createAssigner(_.allKeys, true);
+
+  // 创建包含props属性的继承prototype的函数实例
+  _.create = function(prototype, props) {
+    let result = baseCreate(prototype);
+    if(props) _.extendOwn(result, props);
+    return result;
+  }
+
+  // 克隆一个obj
+  _.clone = function(obj) {
+    if(!_.isObject(obj)) return obj;
+    return _.isArray(obj) ? obj.slice() : _.extend({}, obj);
+  }
+
+  _.tap = function(obj, interceptor) {
+    interceptor(obj);
+    return obj;
+  }
+
+  // 比较方法是先比较基本类型，如string，number等，排除特殊类型
+  // 对于数组和对象类型，利用递归深度遍历内部数据
+  // 利用比较基本类型的方法继续比较内部内部元素直到全部相同或不相同
+  const eq = function(a, b, aStack, bStack) {
+    // 排除 0 === -0 的情况， 0 和 -0 不视为相等
+    if(a === b) return a !== 0 || 1 / a === 1/ b;
+    // 排除 null == undefined 的情况
+    if(a == null || b == null) return a === b;
+    if(a instanceof _) a = a._wrapped;
+    if(b instanceof _) b = b._wrapped;
+    let className = toString.call(a);
+    // 如果a和b的类型不同，可以确定a和b不相等
+    if(className !== toString.call(b)) return false;
+    switch(className) {
+      case "[object RegExp]":
+      case "[object String]":
+        return '' + a === '' + b;
+      case "[object Number]":
+      // 判断NaN情况 NaN !== NaN, 但应视为相同
+        if(+a !== +a) return +b !== +b;
+        return +a === 0 ? 1 / +a === 1 / b : +a === +b;
+      case "[object Date]":
+      case "[object Boolean]":
+        return +a === +b;
+    }
+    let areArrays = className === "[object Array]";
+    if(!areArrays) {
+      if(typeof a != "object" || typeof b != "object") return false;
+      let aCtor = a.constructor,
+          bCtor = b.constructor;
+      // 如果构造函数不相同，则a和b不相同
+      if(aCtor !== bCtor && !((_.isFunction(aCtor) && aCtor instanceof aCtor) && (_.isFunction(bCtor) && bCtor instanceof bCtor)) && ("constructor" in a && "constructor" in b)) return false;
+    }
+    aStack = aStack || [];
+    bStack = bStack || [];
+    let length = aStack.length;
+    while(length--) {
+      if(aStack[length] === a) return bStack[length] === b;
+    }
+    aStack.push(a);
+    bStack.push(b);
+    if(areArrays) {
+      length = a.length;
+      if(length !== b.length) return false;
+      while(length--) {
+        // 递归深度遍历对象
+        if(!eq(a[length], b[length], aStack, bStack)) return false;
+      }
+    } else {
+      let keys = _.keys(a),
+          key;
+      length = keys.length;
+      if(_.keys(b).length != length) return false;
+      while(length--) {
+        key = keys[length];
+        if(!_.has(b, key) && eq(a[key], b[key], aStack, bStack)) return false;
+      }
+    }
+    aStack.pop();
+    bStack.pop();
+    return true;
+  }
+
+  _.isEqual = function(a, b) {
+    return eq(a, b);
+  }
+
+  _.isEmpty = function(obj) {
+    if(obj == null) return true;
+    if(isArrayLike(obj) && (_.isArray(obj) || _.isString(obj) || _.isArguments(obj))) return obj.length === 0;
+    return _.keys(obj).length === 0;
+  }
+
+  _.isElement = function(obj) {
+    return !!(obj && obj.nodeType === 1);
+  }
+
+  _isFinite = function(obj) {
+    return isFinite(obj) && !isNaN(parseFloat(obj));
+  }
+
+  _.isNaN = function(obj) {
+    return _.isNumber(obj) && obj !== +obj;
+  }
+
+  _.isBoolean = function(obj) {
+    return obj === true || obj === false || toString.call(obj) === "[object Boolean]";
+  }
+
+  _.isNull = function(obj) {
+    return obj === null;
+  }
+
+  _.isUndefined = function(obj) {
+    return obj === void 0;
+  }
+
+  _.noConflict = function() {
+    root._ = previousUnderscore;
+    return this;
+  }
+
+  _.constant = function(value) {
+    return function() {
+      return value;
+    }
+  }
+
+  // 类似_.property，参数顺序不同
+  _.propertyOf = function(obj) {
+    return obj == null ? function() {} : function(key) {
+      return obj[key];
+    }
+  }
+
+  // 运行n次iteratee函数，并返回由函数返回值组成的数组
+  _.times = function(n, iteratee, context) {
+    let accm = Array(Math.max(0, n));
+    iteratee = optimizeCb(iteratee, context);
+    for(let i = 0; i < n; i++) accum[i] = iteratee[i];
+    return accum;
+  }
+
+  const escapeMap = {
+    "&": "&amp",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#x27;",
+    "`": "&#x60;",
+  }
+
+  const unescapeMap = _.invert(escapeMap);
+
+  const createEscaper = function(map) {
+    let escaper = function(match) {
+      return map[match];
+    }
+    let source = "(?:" + _.keys(map).join("|") + ")";
+    let testRegexp = RegExp(source);
+    let replaceRegexp = RegExp(source, "g");
+    return function(string) {
+      string = string == null ? '' : '' + string;
+      return testRegexp.test(string) ? string.replace(replaceRegexp, escaper) : string;
+    }
+  }
+
+  _.escape = createEscaper(escapeMap);
+
+  _.unescape = createEscaper(unescapeMap);
+
+  _.result = function(object, property, fallback) {
+    let value = object == null ? void 0 : object[property];
+    if(value === void 0) value = fallback;
+    // 如果property是方法名，则运行object.property()
+    // 如果property是属性名，则返回属性值
+    return _.isFunction(value) ? value.call(object) : value;
+  }
+
+  let idCounter = 0;
+  // 生成全局唯一的id
+  // 如果有prefix参数则为id增加prefix前缀
+  _.uniqueId = function(prefix) {
+    let id = ++idCounter + '';
+    return prefix ? prefix + id : id;
+  }
+
+  // 将obj中的方法混入到_.prototype中
+  _.mixin = function(obj) {
+    _.each(_.functions(obj), function(name) {
+      let fn = _[name] = obj[name];
+      _.prototype[name] = function() {
+        let args = [this._wrapped];
+        push.apply(args, arguments);
+        return result(this, fn.apply(_, args));
+      }
+    })
+  }
+
+  _.mixin(_);
+
+  // 定义 AMD 方式加载模块
+  if(typeof define === "function" && define.amd) {
+    define("underscore", [], function() {
+      return _;
+    });
+  }
 
 }).call(this); // this 这里是全局变量，在node环境下是exports
